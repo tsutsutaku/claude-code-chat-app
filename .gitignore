@@ -1,0 +1,18 @@
+# エージェント用ワークスペース（リポジトリに含めない）
+/workspace/
+
+# chat-app（Next.js）
+chat-app/node_modules/
+chat-app/.next/
+chat-app/out/
+chat-app/build/
+chat-app/.env*
+chat-app/.vercel
+chat-app/*.tsbuildinfo
+chat-app/next-env.d.ts
+chat-app/npm-debug.log*
+chat-app/yarn-error.log*
+chat-app/.pnpm-debug.log*
+
+# OS
+.DS_Store
