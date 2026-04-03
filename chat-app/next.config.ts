@@ -1,9 +1,13 @@
 import type { NextConfig } from "next";
 
-// `serverExternalPackages` に SDK を入れると Turbopack が仮想パッケージ名を生成し、
-// Lambda の `/var/task` で ERR_MODULE_NOT_FOUND になる。`claude-session.ts` の
-// `pathToClaudeCodeExecutable` で cli.js を明示する。
-
-const nextConfig: NextConfig = {};
+// AWS SDK をバンドルに含めると Lambda 上で認証プロバイダーが壊れ
+// 「Could not load credentials from any providers」になることがある。
+const nextConfig: NextConfig = {
+  serverExternalPackages: [
+    "@aws-sdk/client-bedrock-agentcore",
+    "@aws-sdk/credential-provider-node",
+    "@smithy/node-http-handler",
+  ],
+};
 
 export default nextConfig;

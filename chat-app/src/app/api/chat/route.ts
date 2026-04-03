@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { defaultProvider } from "@aws-sdk/credential-provider-node";
 import {
   BedrockAgentCoreClient,
   InvokeAgentRuntimeCommand,
@@ -85,7 +86,10 @@ export async function POST(req: Request) {
     );
   }
 
-  const client = new BedrockAgentCoreClient({ region: AWS_REGION });
+  const client = new BedrockAgentCoreClient({
+    region: AWS_REGION,
+    credentials: defaultProvider(),
+  });
   const runtimeSessionId = chatKey
     ? toRuntimeSessionId(chatKey)
     : toRuntimeSessionId(crypto.randomUUID().replace(/-/g, ""));
