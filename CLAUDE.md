@@ -4,17 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-Next.js チャット（Amplify ホスティング）+ **AWS Lambda + API Gateway** 上の Claude Agent SDK。
-Lambda が `POST /invocations` を処理し、SSE でフロントへストリーミングする。Amplify の `/api/chat` は **HTTP で API Gateway を叩くだけ**（AWS SDK・SigV4 不要）。
+Next.js チャット（Amplify ホスティング）+ **AWS Lambda（Function URL・レスポンスストリーミング）** 上の Claude Agent SDK。
+CloudFormation の `AWS::ApiGatewayV2::Integration` には **`InvokeMode` が無い**ため、長い SSE 用に **Lambda Function URL**（`InvokeMode: RESPONSE_STREAM`）で HTTPS 公開する。Amplify の `/api/chat` は **`fetch(AGENT_API_URL/invocations)` のみ**。
 
-参考: [Amplify と AgentCore のハンズオン（別構成）](https://qiita.com/minorun365/items/11be2c3565923b96ab54) — 本リポジトリは **Lambda + HTTP API** を採用。
+参考: [Amplify と AgentCore のハンズオン（別構成）](https://qiita.com/minorun365/items/11be2c3565923b96ab54)
 
 ## Architecture
 
 ```
 Browser (useAgentChat)
  → POST /api/chat                         (Amplify / Next.js: fetch のみ)
- → POST {AGENT_API_URL}/invocations       (API Gateway → Lambda レスポンスストリーミング)
+ → POST {AGENT_API_URL}/invocations       (Lambda Function URL → レスポンスストリーミング)
  → @anthropic-ai/claude-agent-sdk query()
  ├── cwd: /tmp/workspace/kurewari
  ├── model: claude-haiku-4-5
@@ -29,12 +29,12 @@ Browser (useAgentChat)
 /
 ├── agent/
 │   ├── sam/
-│   │   └── template.yaml        # SAM: Lambda + HTTP API (InvokeMode: RESPONSE_STREAM)
+│   │   └── template.yaml        # SAM: Lambda + Function URL (RESPONSE_STREAM)
 │   └── app/ChatAgent/
 │       ├── Makefile             # sam build 用
 │       ├── package.json
 │       └── src/
-│           ├── lambda-handler.ts  # Lambda (streamifyResponse)
+│           ├── lambda-handler.ts  # Lambda Function URL + streamifyResponse
 │           ├── server.ts          # ローカル HTTP (port 8080)
 │           ├── invocation.ts      # /invocations 共通ロジック
 │           ├── claude-session.ts
@@ -61,7 +61,7 @@ npm start            # http://localhost:8080  (/ping, /invocations)
 cd agent/sam
 sam build
 sam deploy --guided   # AnthropicApiKey などを入力
-# Outputs の HttpApiUrl を Amplify の AGENT_API_URL に設定
+# Outputs の AgentApiUrl を Amplify の AGENT_API_URL に設定
 ```
 
 ### フロントエンド（`chat-app/`）
@@ -97,8 +97,8 @@ AGENTCORE_LOCAL_URL               # 任意: ローカル開発時のみ（本番
 | File | Role |
 |------|------|
 | `agent/app/ChatAgent/src/invocation.ts` | Claude query + UIMessage SSE 生成 |
-| `agent/app/ChatAgent/src/lambda-handler.ts` | API Gateway v2 + レスポンスストリーミング |
-| `agent/sam/template.yaml` | Lambda + HTTP API |
+| `agent/app/ChatAgent/src/lambda-handler.ts` | HTTP API v2 形式イベント + レスポンスストリーミング |
+| `agent/sam/template.yaml` | Lambda + Function URL |
 | `chat-app/src/app/api/chat/route.ts` | `fetch(AGENT_API_URL/invocations)` プロキシ |
 
 ## Notes

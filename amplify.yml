@@ -1,8 +1,8 @@
 # AWS Amplify Hosting（公式: https://docs.aws.amazon.com/amplify/latest/userguide/ ）
 #
 # 【appRoot】ビルドのカレントはリポジトリ内のこのディレクトリ（= chat-app）。
-# 【アーキテクチャ】バックエンドは Lambda + API Gateway。本アプリは薄い HTTP プロキシ + フロント。
-#   ブラウザ → POST /api/chat → fetch(API Gateway /invocations) → Lambda(Claude Agent SDK)
+# 【アーキテクチャ】バックエンドは Lambda Function URL（ストリーミング）。本アプリは薄い HTTP プロキシ + フロント。
+#   ブラウザ → POST /api/chat → fetch(AGENT_API_URL/invocations) → Lambda(Claude Agent SDK)
 # 【必須環境変数】
 #   AGENT_API_URL        : sam deploy 後の HttpApiUrl（末尾スラッシュなし）
 #   NEXT_PUBLIC_*        : クライアント側公開変数（Langfuse など）

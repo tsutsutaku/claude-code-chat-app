@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
-Description: Claude ChatAgent — Lambda + HTTP API（レスポンスストリーミング）
+Description: Claude ChatAgent — Lambda Function URL（レスポンスストリーミング）。API Gateway の Integration には CFN で InvokeMode が無いため、HTTPS 公開は Function URL を使用。
 
 Parameters:
   AnthropicApiKey:
@@ -43,65 +43,27 @@ Resources:
           WORKSPACE_PATH: /tmp/workspace
           NODE_OPTIONS: --enable-source-maps
 
-  ChatHttpApi:
-    Type: AWS::ApiGatewayV2::Api
+  # CloudFormation では ApiGatewayV2 Integration に InvokeMode が無いため、ストリーミングは Function URL を使用
+  ChatAgentFunctionUrl:
+    Type: AWS::Lambda::Url
     Properties:
-      Name: !Sub ${AWS::StackName}-http
-      ProtocolType: HTTP
-      CorsConfiguration:
+      AuthType: NONE
+      TargetFunctionArn: !GetAtt ChatAgentFunction.Arn
+      InvokeMode: RESPONSE_STREAM
+      Cors:
         AllowOrigins:
           - "*"
         AllowMethods:
           - GET
           - POST
-          - OPTIONS
         AllowHeaders:
           - content-type
           - authorization
           - x-api-key
 
-  ChatLambdaIntegration:
-    Type: AWS::ApiGatewayV2::Integration
-    Properties:
-      ApiId: !Ref ChatHttpApi
-      IntegrationType: AWS_PROXY
-      IntegrationUri: !GetAtt ChatAgentFunction.Arn
-      PayloadFormatVersion: "2.0"
-      IntegrationMethod: POST
-      InvokeMode: RESPONSE_STREAM
-
-  ChatLambdaPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      FunctionName: !Ref ChatAgentFunction
-      Action: lambda:InvokeFunction
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ChatHttpApi}/*/*/*
-
-  PostInvocationsRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ChatHttpApi
-      RouteKey: POST /invocations
-      Target: !Sub integrations/${ChatLambdaIntegration}
-
-  GetPingRoute:
-    Type: AWS::ApiGatewayV2::Route
-    Properties:
-      ApiId: !Ref ChatHttpApi
-      RouteKey: GET /ping
-      Target: !Sub integrations/${ChatLambdaIntegration}
-
-  DefaultStage:
-    Type: AWS::ApiGatewayV2::Stage
-    Properties:
-      ApiId: !Ref ChatHttpApi
-      StageName: $default
-      AutoDeploy: true
-
 Outputs:
-  HttpApiUrl:
-    Description: API Gateway のベース URL（末尾に /invocations を付けて POST）
-    Value: !Sub https://${ChatHttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  AgentApiUrl:
+    Description: Amplify の AGENT_API_URL に設定（末尾スラッシュなし）。POST /invocations で SSE。
+    Value: !GetAtt ChatAgentFunctionUrl.FunctionUrl
   ChatAgentFunctionArn:
     Value: !GetAtt ChatAgentFunction.Arn
