@@ -1,11 +1,9 @@
 import type { NextConfig } from "next";
 
-// AWS SDK をバンドルに含めると Lambda 上で認証プロバイダーが壊れ
-// 「Could not load credentials from any providers」になることがある。
-const nextConfig: NextConfig = {
-  // このクライアントだけ外部化。credential-provider を別指定すると Turbopack が
-  // Lambda で解決できないハッシュ付き external 参照を生成することがある。
-  serverExternalPackages: ["@aws-sdk/client-bedrock-agentcore"],
-};
+// Amplify の Lambda では `serverExternalPackages` に AWS SDK を入れると、Turbopack が
+// `@aws-sdk/...-<hash>` の仮想パスで external 参照し、実行時にモジュールが見つからず落ちる。
+// SDK はバンドルに含める（認証は Lambda の環境変数経由で default chain が効く）。
+
+const nextConfig: NextConfig = {};
 
 export default nextConfig;
