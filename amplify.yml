@@ -7,11 +7,11 @@ applications:
             - nvm use 22
             - node --version
             - npm ci
+            # エージェントの cwd として必要な空ディレクトリを用意
+            - mkdir -p workspace/kurewari
         build:
           commands:
             - npm run build
-            # standalone バンドルに空の workspace を含める（エージェントの cwd として必要）
-            - mkdir -p .next/standalone/workspace/kurewari
       artifacts:
         baseDirectory: .next
         files:
