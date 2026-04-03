@@ -11,6 +11,12 @@ applications:
             - mkdir -p workspace/kurewari
         build:
           commands:
+            # Amplify コンソールの環境変数を Next.js のビルドに渡す（必要なキーのみ）
+            - rm -f .env.production
+            - env | grep -e '^ANTHROPIC_' >> .env.production || true
+            - env | grep -e '^LANGFUSE_' >> .env.production || true
+            - env | grep -e '^NEXT_PUBLIC_' >> .env.production || true
+            - env | grep -e '^WORKSPACE_PATH=' >> .env.production || true
             - npm run build
       artifacts:
         baseDirectory: .next
