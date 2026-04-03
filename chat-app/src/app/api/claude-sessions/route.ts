@@ -15,6 +15,7 @@ export async function GET() {
   const dir = getClaudeSessionsDir();
   let names: string[];
   try {
+    await fs.mkdir(dir, { recursive: true });
     names = await fs.readdir(dir);
   } catch {
     return Response.json(
