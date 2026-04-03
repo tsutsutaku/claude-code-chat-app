@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Claude ChatAgent — Lambda + HTTP API（レスポンスストリーミング）
+
+Parameters:
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: ANTHROPIC_API_KEY
+  LangfuseSecretKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+  LangfusePublicKey:
+    Type: String
+    Default: ""
+  LangfuseBaseUrl:
+    Type: String
+    Default: ""
+
+Globals:
+  Function:
+    Timeout: 900
+    MemorySize: 1024
+    Architectures:
+      - arm64
+
+Resources:
+  ChatAgentFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: makefile
+    Properties:
+      CodeUri: ../app/ChatAgent/
+      Handler: dist/lambda-handler.handler
+      Runtime: nodejs22.x
+      Environment:
+        Variables:
+          ANTHROPIC_API_KEY: !Ref AnthropicApiKey
+          LANGFUSE_SECRET_KEY: !Ref LangfuseSecretKey
+          LANGFUSE_PUBLIC_KEY: !Ref LangfusePublicKey
+          LANGFUSE_BASE_URL: !Ref LangfuseBaseUrl
+          WORKSPACE_PATH: /tmp/workspace
+          NODE_OPTIONS: --enable-source-maps
+
+  ChatHttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${AWS::StackName}-http
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - "*"
+        AllowMethods:
+          - GET
+          - POST
+          - OPTIONS
+        AllowHeaders:
+          - content-type
+          - authorization
+          - x-api-key
+
+  ChatLambdaIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref ChatHttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !GetAtt ChatAgentFunction.Arn
+      PayloadFormatVersion: "2.0"
+      IntegrationMethod: POST
+      InvokeMode: RESPONSE_STREAM
+
+  ChatLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ChatAgentFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ChatHttpApi}/*/*/*
+
+  PostInvocationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ChatHttpApi
+      RouteKey: POST /invocations
+      Target: !Sub integrations/${ChatLambdaIntegration}
+
+  GetPingRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref ChatHttpApi
+      RouteKey: GET /ping
+      Target: !Sub integrations/${ChatLambdaIntegration}
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref ChatHttpApi
+      StageName: $default
+      AutoDeploy: true
+
+Outputs:
+  HttpApiUrl:
+    Description: API Gateway のベース URL（末尾に /invocations を付けて POST）
+    Value: !Sub https://${ChatHttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  ChatAgentFunctionArn:
+    Value: !GetAtt ChatAgentFunction.Arn

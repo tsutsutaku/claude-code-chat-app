@@ -1,28 +1,9 @@
-import fs from "fs";
 import { createServer } from "http";
 import type { IncomingMessage, ServerResponse } from "http";
-import { randomUUID } from "crypto";
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import {
-  agentQueryOptions,
-  MODEL,
-  WORKSPACE_PATH,
-} from "./claude-session.js";
-import {
-  AgentToolSpanTracker,
-  finalizeAgentGenerationAndTrace,
-  getLangfuse,
-  resolveLangfuseEnvironment,
-} from "./langfuse-instrumentation.js";
-import { resolveAgentSystemPrompt } from "./langfuse-system-prompt.js";
-import { createUIMessageStream } from "./stream-adapter.js";
+import { runInvocation, type InvocationBody } from "./invocation.js";
 
 const PORT = 8080;
 const HOST = "0.0.0.0";
-
-/** チャットセッションごとの Claude Agent SDK セッション ID を管理 */
-const sessionStore = new Map<string, string>();
 
 async function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -47,17 +28,12 @@ async function handleInvocations(
   req: IncomingMessage,
   res: ServerResponse
 ): Promise<void> {
-  let body: {
-    prompt?: string;
-    developerMode?: boolean;
-    chatId?: string;
-    resumeSessionId?: string;
-  } = {};
+  let body: InvocationBody = {};
 
   try {
     const raw = await readBody(req);
     if (raw.trim()) {
-      body = JSON.parse(raw) as typeof body;
+      body = JSON.parse(raw) as InvocationBody;
     }
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
@@ -65,115 +41,16 @@ async function handleInvocations(
     return;
   }
 
-  const userText = body.prompt?.trim() ?? "";
-  if (!userText) {
-    res.writeHead(400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "No prompt provided" }));
-    return;
-  }
-
-  const { developerMode, chatId, resumeSessionId } = body;
-  const chatKey = chatId ?? randomUUID();
-  const existingSessionId =
-    (chatId ? sessionStore.get(chatId) : undefined) ?? resumeSessionId;
-
   const abortController = new AbortController();
   req.on("close", () => abortController.abort());
 
-  fs.mkdirSync(WORKSPACE_PATH, { recursive: true });
+  const result = await runInvocation(body, abortController.signal);
 
-  console.log("[server] prompt:", userText.slice(0, 100));
-  console.log("[server] chatKey:", chatKey);
-  console.log("[server] WORKSPACE_PATH:", WORKSPACE_PATH);
-  console.log("[server] existingSessionId:", existingSessionId ?? "none");
-
-  const langfuse = getLangfuse();
-  const resolvedPrompt = await resolveAgentSystemPrompt(developerMode !== false);
-
-  const trace = langfuse.trace({
-    name: "claude-agent-chat",
-    input: userText,
-    ...(chatId ? { sessionId: chatId } : {}),
-    tags: [
-      "agentcore",
-      developerMode === false ? "mode:business" : "mode:developer",
-    ],
-    environment: resolveLangfuseEnvironment(),
-    metadata: {
-      developer_mode: developerMode !== false,
-      ...(chatId ? { client_chat_key: chatId } : {}),
-    },
-  });
-
-  const generation = trace.generation({
-    name: "claude-agent-query",
-    model: MODEL,
-    input: userText,
-    modelParameters: {
-      developer_mode: developerMode !== false,
-    },
-    ...(resolvedPrompt.langfusePrompt
-      ? { prompt: resolvedPrompt.langfusePrompt }
-      : {}),
-  });
-
-  const toolTracker = new AgentToolSpanTracker(generation);
-
-  const q = query({
-    prompt: userText,
-    options: agentQueryOptions({
-      resume: existingSessionId,
-      abortController,
-      systemPrompt: resolvedPrompt.systemPrompt,
-    }),
-  });
-
-  const wrappedStream = async function* (): AsyncGenerator<SDKMessage, void> {
-    let outputText = "";
-    let resultMessage: SDKResultMessage | null = null;
-    let streamError: unknown = null;
-
-    try {
-      for await (const msg of q) {
-        toolTracker.handleMessage(msg);
-
-        if (chatId && msg.session_id && !sessionStore.has(chatId)) {
-          sessionStore.set(chatId, msg.session_id);
-        }
-        if (
-          msg.type === "assistant" &&
-          Array.isArray(msg.message?.content)
-        ) {
-          for (const block of msg.message.content) {
-            if (block.type === "text") outputText += block.text;
-          }
-        }
-        if (msg.type === "result") {
-          resultMessage = msg;
-        }
-        yield msg;
-      }
-    } catch (err) {
-      streamError = err;
-      console.error("[server] stream error:", err);
-      throw err;
-    } finally {
-      toolTracker.endOpenWithWarning();
-      finalizeAgentGenerationAndTrace({
-        trace,
-        generation,
-        result: resultMessage,
-        streamError,
-        outputText,
-        model: MODEL,
-      });
-      await langfuse.flushAsync();
-    }
-  };
-
-  const uiStream = createUIMessageStream(wrappedStream(), {
-    langfuseTraceId: trace.id,
-  });
+  if (!result.ok) {
+    res.writeHead(result.status, { "Content-Type": "application/json" });
+    res.end(result.body);
+    return;
+  }
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -182,12 +59,12 @@ async function handleInvocations(
     "X-Accel-Buffering": "no",
   });
 
-  const reader = uiStream.getReader();
+  const reader = result.stream.getReader();
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      res.write(value);
+      res.write(Buffer.from(value));
     }
   } catch (err) {
     console.error("[server] pipe error:", err);
@@ -221,6 +98,5 @@ const server = createServer(async (req: IncomingMessage, res: ServerResponse) =>
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`[server] AgentCore ChatAgent running on ${HOST}:${PORT}`);
-  console.log(`[server] WORKSPACE_PATH: ${WORKSPACE_PATH}`);
+  console.log(`[server] ChatAgent HTTP on ${HOST}:${PORT}`);
 });

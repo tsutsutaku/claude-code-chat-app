@@ -20,6 +20,7 @@ agent/app/ChatAgent/dist/
 agent/agentcore/.env.local
 agent/agentcore/.cli/
 agent/.runtime-arn
+agent/sam/.aws-sam/
 
 # OS
 .DS_Store

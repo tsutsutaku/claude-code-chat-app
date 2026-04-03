@@ -1,13 +1,14 @@
 # AWS Amplify Hosting（公式: https://docs.aws.amazon.com/amplify/latest/userguide/ ）
 #
 # 【appRoot】ビルドのカレントはリポジトリ内のこのディレクトリ（= chat-app）。
-# 【アーキテクチャ】バックエンドは AgentCore に移管。このアプリは薄いプロキシ + フロントエンドのみ。
-#   フロントエンド → POST /api/chat → AgentCore (InvokeAgentRuntime)
+# 【アーキテクチャ】バックエンドは Lambda + API Gateway。本アプリは薄い HTTP プロキシ + フロント。
+#   ブラウザ → POST /api/chat → fetch(API Gateway /invocations) → Lambda(Claude Agent SDK)
 # 【必須環境変数】
-#   AGENTCORE_AGENT_ARN  : デプロイ後に agentcore status で確認
-#   AGENTCORE_REGION     : AgentCore をデプロイしたリージョン（例: us-east-1）※AWS_は使用不可
+#   AGENT_API_URL        : sam deploy 後の HttpApiUrl（末尾スラッシュなし）
 #   NEXT_PUBLIC_*        : クライアント側公開変数（Langfuse など）
-# 【IAM】Amplify の実行ロールに bedrock-agentcore:InvokeAgentRuntime 権限が必要
+# 【オプション】
+#   AGENT_API_KEY        : API Gateway で API キーを有効にした場合
+#   AGENTCORE_LOCAL_URL  : ローカルで ChatAgent を直叩きする場合（本番では未設定）
 version: 1
 applications:
   - frontend:
@@ -21,7 +22,8 @@ applications:
           commands:
             - rm -f .env.production
             - env | grep -e '^NEXT_PUBLIC_' >> .env.production || true
-            - env | grep -e '^AGENTCORE_' >> .env.production || true
+            - env | grep -e '^AGENT_' >> .env.production || true
+            - env | grep -e '^AGENTCORE_LOCAL_URL=' >> .env.production || true
             - npm run build
       artifacts:
         baseDirectory: .next

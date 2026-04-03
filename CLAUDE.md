@@ -4,137 +4,105 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-A Next.js chat application (Amplify フロントエンド) + Amazon Bedrock AgentCore バックエンド。
-AgentCore 上でエージェント (Claude Agent SDK) が kurewari プロジェクトのワークスペースを分析し、SSE でフロントエンドにストリーミングする。
+Next.js チャット（Amplify ホスティング）+ **AWS Lambda + API Gateway** 上の Claude Agent SDK。
+Lambda が `POST /invocations` を処理し、SSE でフロントへストリーミングする。Amplify の `/api/chat` は **HTTP で API Gateway を叩くだけ**（AWS SDK・SigV4 不要）。
+
+参考: [Amplify と AgentCore のハンズオン（別構成）](https://qiita.com/minorun365/items/11be2c3565923b96ab54) — 本リポジトリは **Lambda + HTTP API** を採用。
 
 ## Architecture
 
 ```
 Browser (useAgentChat)
- → POST /api/chat                              (Amplify / Next.js proxy)
- → InvokeAgentRuntime                         (AWS SDK → AgentCore)
- → POST /invocations                          (AgentCore Container: Node.js)
+ → POST /api/chat                         (Amplify / Next.js: fetch のみ)
+ → POST {AGENT_API_URL}/invocations       (API Gateway → Lambda レスポンスストリーミング)
  → @anthropic-ai/claude-agent-sdk query()
  ├── cwd: /tmp/workspace/kurewari
  ├── model: claude-haiku-4-5
  ├── tools: Claude Code preset
  └── canUseTool: validates paths within workspace
- → SSE (UIMessage Stream) → Amplify proxy → Browser
+ → SSE (UIMessage Stream) → /api/chat → Browser
 ```
 
 ## Directory Structure
 
 ```
 /
-├── agent/                       # AgentCore プロジェクト（バックエンド）
-│   ├── agentcore/
-│   │   ├── agentcore.json       # エージェント定義
-│   │   ├── aws-targets.json     # デプロイ先 AWS アカウント・リージョン
-│   │   └── .env.local           # ローカル開発用シークレット（gitignored）
+├── agent/
+│   ├── sam/
+│   │   └── template.yaml        # SAM: Lambda + HTTP API (InvokeMode: RESPONSE_STREAM)
 │   └── app/ChatAgent/
-│       ├── Dockerfile           # Node.js 22 ARM64 コンテナ
+│       ├── Makefile             # sam build 用
 │       ├── package.json
-│       ├── tsconfig.json
 │       └── src/
-│           ├── server.ts        # HTTP server (GET /ping, POST /invocations)
+│           ├── lambda-handler.ts  # Lambda (streamifyResponse)
+│           ├── server.ts          # ローカル HTTP (port 8080)
+│           ├── invocation.ts      # /invocations 共通ロジック
 │           ├── claude-session.ts
-│           ├── stream-adapter.ts
-│           ├── langfuse-instrumentation.ts
-│           ├── langfuse-system-prompt.ts
-│           ├── workspace-tool-permissions.ts
-│           ├── tool-subtitle.ts
-│           ├── bash-tool-display.ts
-│           └── read-tool-display.ts
-├── chat-app/                    # Amplify フロントエンド（Next.js 16）
-│   └── src/
-│       ├── app/api/chat/route.ts  # AgentCore への薄いプロキシ
-│       └── ...
-├── amplify.yml                  # Amplify Hosting ビルド定義
+│           └── ...
+├── chat-app/
+│   └── src/app/api/chat/route.ts  # AGENT_API_URL へ fetch
+├── amplify.yml
 └── CLAUDE.md
 ```
 
 ## Development Commands
 
-### AgentCore バックエンド (`agent/app/ChatAgent/`)
+### ChatAgent（`agent/app/ChatAgent/`）
 
 ```bash
 npm install
-npm run build        # TypeScript コンパイル
-npm start            # サーバー起動 (port 8080)
+npm run build
+npm start            # http://localhost:8080  (/ping, /invocations)
 ```
 
-AgentCore CLI でのローカルテスト:
+### SAM デプロイ（`agent/sam/`）
 
 ```bash
-cd agent
-agentcore dev        # ローカル開発サーバー
-agentcore dev "質問してみる"   # 別ターミナルから invoke
+cd agent/sam
+sam build
+sam deploy --guided   # AnthropicApiKey などを入力
+# Outputs の HttpApiUrl を Amplify の AGENT_API_URL に設定
 ```
 
-### デプロイ
-
-```bash
-cd agent
-# aws-targets.json に AWS アカウント ID とリージョンを設定してから:
-agentcore deploy -y
-# デプロイ後に ARN を確認:
-agentcore status
-```
-
-### フロントエンド (`chat-app/`)
+### フロントエンド（`chat-app/`）
 
 ```bash
 npm install
 npm run dev         # http://localhost:3000
+# .env に AGENTCORE_LOCAL_URL=http://localhost:8080 でローカルエージェントに接続
 npm run build
 npm run lint
 ```
 
 ## Required Environment Variables
 
-### AgentCore コンテナ（`agent/agentcore/.env.local`）
+### Lambda（SAM パラメータまたはコンソール）
+
+- `ANTHROPIC_API_KEY`（必須）
+- `LANGFUSE_*`（任意）
+
+### Amplify（コンソール → 環境変数）
 
 ```
-ANTHROPIC_API_KEY   # 必須
-LANGFUSE_SECRET_KEY # オプション
-LANGFUSE_PUBLIC_KEY # オプション
-LANGFUSE_BASE_URL   # オプション
-```
-
-### Amplify フロントエンド（Amplify コンソールで設定）
-
-```
-AGENTCORE_AGENT_ARN  # デプロイ後に agentcore status で確認（必須）
-AWS_REGION           # AgentCore デプロイ先リージョン（必須）
-NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY  # オプション
-NEXT_PUBLIC_LANGFUSE_BASE_URL    # オプション
-NEXT_PUBLIC_USER_ID              # オプション
-```
-
-## AgentCore CLI Reference
-
-```bash
-npm install -g @aws/agentcore   # インストール
-agentcore create                # プロジェクト作成（ウィザード）
-agentcore deploy -y             # デプロイ
-agentcore status                # ARN・デプロイ状態確認
-agentcore invoke "テスト"       # デプロイ済みエージェントを呼ぶ
-agentcore logs                  # ログストリーム
+AGENT_API_URL          # 必須: sam deploy の HttpApiUrl（末尾スラッシュなし）
+AGENT_API_KEY          # 任意: API Gateway で API キーを付けた場合
+NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY   # 任意
+NEXT_PUBLIC_LANGFUSE_BASE_URL     # 任意
+NEXT_PUBLIC_USER_ID               # 任意
+AGENTCORE_LOCAL_URL               # 任意: ローカル開発時のみ（本番では未設定）
 ```
 
 ## Key Files
 
 | File | Role |
 |------|------|
-| `agent/app/ChatAgent/src/server.ts` | HTTP エントリポイント（/ping, /invocations） |
-| `agent/app/ChatAgent/src/claude-session.ts` | Claude Agent SDK オプション・WORKSPACE_PATH |
-| `agent/app/ChatAgent/src/stream-adapter.ts` | SDKMessage → UIMessage SSE 変換 |
-| `chat-app/src/app/api/chat/route.ts` | Amplify プロキシ（InvokeAgentRuntime） |
-| `chat-app/src/lib/use-agent-chat.ts` | クライアント側チャットフック |
+| `agent/app/ChatAgent/src/invocation.ts` | Claude query + UIMessage SSE 生成 |
+| `agent/app/ChatAgent/src/lambda-handler.ts` | API Gateway v2 + レスポンスストリーミング |
+| `agent/sam/template.yaml` | Lambda + HTTP API |
+| `chat-app/src/app/api/chat/route.ts` | `fetch(AGENT_API_URL/invocations)` プロキシ |
 
 ## Notes
 
-- AgentCore コンテナは長時間起動する（サーバーレスではない）のでインメモリの `sessionStore` が機能する
-- `WORKSPACE_PATH` は `/tmp/workspace` 固定（コンテナの書き込み可能領域）
-- Amplify 実行ロールに `bedrock-agentcore:InvokeAgentRuntime` IAM 権限が必要
-- ストリーミングレスポンスは AgentCore の SSE → Amplify プロキシ → ブラウザとパイプされる
+- Lambda の `/tmp` にワークスペースを展開する場合はデプロイ手順でバンドルするか、起動時に取得する必要がある（現状のサンプルは空の workspace 前提）。
+- 同一 Lambda インスタンス内では `invocation.ts` の `sessionStore` が有効。コールドスタートや別インスタンスではセッションは引き継がれない場合がある。
+- Amplify 側に **Bedrock / InvokeAgentRuntime の IAM は不要**（サーバーは公開 HTTP の API Gateway を fetch するだけ）。

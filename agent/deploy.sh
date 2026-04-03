@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# （任意）Bedrock AgentCore へコンテナ手動デプロイ。本番は agent/sam（Lambda+API Gateway）を推奨。
 # AgentCore ChatAgent — 手動デプロイスクリプト
 # 使い方: ./deploy.sh [--update]
 #   --update: 既存 runtime を更新（新しいイメージを push してバージョンを作成）
