@@ -2,6 +2,32 @@ import path from "path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
 import { createWorkspaceCanUseTool } from "@/lib/workspace-tool-permissions";
 
+/** Lambda / Amplify SSR / Vercel など、ファイルシステムとバンドルが特殊な実行環境 */
+function isServerlessLikeRuntime(): boolean {
+  return Boolean(
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.AWS_EXECUTION_ENV ||
+      process.env.LAMBDA_TASK_ROOT ||
+      process.env.VERCEL,
+  );
+}
+
+/**
+ * Claude Code プロセスに渡す環境変数。
+ * サーバーレスでは HOME 下への書き込みが失敗しうるため /tmp を明示する。
+ */
+function claudeCodeProcessEnv(): NonNullable<Options["env"]> {
+  const home = process.env.CLAUDE_SERVERLESS_HOME?.trim() || "/tmp";
+  return {
+    ...process.env,
+    HOME: home,
+    XDG_CONFIG_HOME: `${home}/.config`,
+    XDG_DATA_HOME: `${home}/.local/share`,
+    XDG_CACHE_HOME: `${home}/.cache`,
+    TMPDIR: home,
+  };
+}
+
 /**
  * リポジトリ直下の `workspace` をエージェントの cwd にする。
  * - `WORKSPACE_PATH` 環境変数が設定されている場合はその値を使用（Amplify 等デプロイ環境向け）
@@ -92,6 +118,12 @@ export function agentQueryOptions(params: {
     ],
     /** テキスト・ツール呼び出しのストリームイベントを受け取る */
     includePartialMessages: true,
+    ...(isServerlessLikeRuntime()
+      ? {
+          persistSession: false,
+          env: claudeCodeProcessEnv(),
+        }
+      : {}),
     ...(params.resume ? { resume: params.resume } : {}),
     ...(params.abortController
       ? { abortController: params.abortController }
