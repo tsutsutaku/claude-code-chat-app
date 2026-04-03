@@ -130,21 +130,29 @@
   }
 }
 
-/* Streamdown コードブロック: 既定の my-4 / gap-2 / p-2 と内側 p-4 が余白を大きくしている */
+/* Streamdown コードブロック */
 @layer components {
+  /* コンテナ: 上下マージンを適度に確保、内側パディングは最小限 */
   [data-streamdown="code-block"] {
-    margin-top: 0.5rem !important;
-    margin-bottom: 0.5rem !important;
-    gap: 0.25rem !important;
-    padding: 0.5rem !important;
+    margin-top: 0.75rem !important;
+    margin-bottom: 0.75rem !important;
+    gap: 0 !important;
+    padding: 0 !important;
   }
 
-  /* アクションバー -mt-10 による上の空きを解消 */
-  [data-streamdown="code-block"] > div.pointer-events-none.sticky {
+  /* ヘッダー: h-8 固定高を解除し、コンテンツがなければ非表示 */
+  [data-streamdown="code-block-header"] {
+    height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  /* アクションバー: -mt-10 のネガティブマージンをリセット */
+  [data-streamdown="code-block-actions"] {
     margin-top: 0 !important;
   }
 
-  /* シンタックス強調エリア（内枠）のパディングを詰める（既定 p-4） */
+  /* シンタックス強調エリア */
   [data-streamdown="code-block-body"] {
     padding: 0.5rem 0.75rem !important;
   }
