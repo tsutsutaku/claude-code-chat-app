@@ -43,6 +43,8 @@ let langfuseSingleton: Langfuse | null = null;
 export function getLangfuse(): Langfuse {
   if (!langfuseSingleton) {
     langfuseSingleton = new Langfuse({
+      secretKey: process.env.LANGFUSE_SECRET_KEY,
+      publicKey: process.env.LANGFUSE_PUBLIC_KEY,
       baseUrl:
         process.env.LANGFUSE_BASE_URL ??
         process.env.LANGFUSE_HOST ??
