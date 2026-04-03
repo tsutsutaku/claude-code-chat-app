@@ -1,7 +1,8 @@
+import fs from "fs";
 import type { UIMessage } from "ai";
 import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { query } from "@anthropic-ai/claude-agent-sdk";
-import { agentQueryOptions, MODEL } from "@/lib/claude-session";
+import { agentQueryOptions, MODEL, WORKSPACE_PATH } from "@/lib/claude-session";
 import {
   AgentToolSpanTracker,
   finalizeAgentGenerationAndTrace,
@@ -92,6 +93,9 @@ export async function POST(req: Request) {
   });
 
   const toolTracker = new AgentToolSpanTracker(generation);
+
+  // Lambda の /tmp など存在しない場合に備えて workspace を確保
+  fs.mkdirSync(WORKSPACE_PATH, { recursive: true });
 
   // V1: query() + マルチターンは options.resume
   const q = query({

@@ -4,10 +4,14 @@ import { createWorkspaceCanUseTool } from "@/lib/workspace-tool-permissions";
 
 /**
  * リポジトリ直下の `workspace` をエージェントの cwd にする。
+ * - `WORKSPACE_PATH` 環境変数が設定されている場合はその値を使用（Amplify 等デプロイ環境向け）
  * - `chat-app` で `next dev` する場合: 親の `workspace`
  * - リポジトリルートで起動する場合: その直下の `workspace`
  */
 function resolveWorkspacePath(): string {
+  if (process.env.WORKSPACE_PATH) {
+    return path.resolve(process.env.WORKSPACE_PATH);
+  }
   const cwd = process.cwd();
   if (path.basename(cwd) === "chat-app") {
     return path.resolve(cwd, "..", "workspace");
