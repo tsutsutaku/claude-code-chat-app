@@ -7,6 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Next.js チャット（Amplify ホスティング）+ **AWS Lambda（Function URL・レスポンスストリーミング）** 上の Claude Agent SDK。
 CloudFormation の `AWS::ApiGatewayV2::Integration` には **`InvokeMode` が無い**ため、長い SSE 用に **Lambda Function URL**（`InvokeMode: RESPONSE_STREAM`）で HTTPS 公開する。Amplify の `/api/chat` は **`fetch(AGENT_API_URL/invocations)` のみ**。
 
+注: API Gateway + Lambda でストリーミングは機能するが、`InvokeMode: RESPONSE_STREAM` は CFN スキーマ未対応のため `deploy.sh` が `sam deploy` 後に `aws apigatewayv2 update-integration` で設定する。
+
 参考: [Amplify と AgentCore のハンズオン（別構成）](https://qiita.com/minorun365/items/11be2c3565923b96ab54)
 
 ## Architecture
@@ -29,7 +31,8 @@ Browser (useAgentChat)
 /
 ├── agent/
 │   ├── sam/
-│   │   └── template.yaml        # SAM: Lambda + Function URL (RESPONSE_STREAM)
+│   │   ├── template.yaml        # SAM: Lambda + API Gateway HTTP API
+│   │   └── deploy.sh            # sam deploy + InvokeMode post-deploy CLI 設定
 │   └── app/ChatAgent/
 │       ├── Makefile             # sam build 用
 │       ├── package.json
@@ -59,9 +62,11 @@ npm start            # http://localhost:8080  (/ping, /invocations)
 
 ```bash
 cd agent/sam
-sam build
-sam deploy --guided   # AnthropicApiKey などを入力
-# Outputs の AgentApiUrl を Amplify の AGENT_API_URL に設定
+# 初回（guided でパラメータを入力し samconfig.toml に保存）:
+sam deploy --guided
+# 2 回目以降:
+./deploy.sh   # sam build → sam deploy → InvokeMode: RESPONSE_STREAM を CLI で設定
+# Outputs の HttpApiUrl が .api-url に保存される → Amplify の AGENT_API_URL に設定
 ```
 
 ### フロントエンド（`chat-app/`）

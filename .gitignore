@@ -21,6 +21,7 @@ agent/agentcore/.env.local
 agent/agentcore/.cli/
 agent/.runtime-arn
 agent/sam/.aws-sam/
+agent/sam/.api-url
 
 # OS
 .DS_Store
