@@ -97,6 +97,11 @@ export async function POST(req: Request) {
   // Lambda の /tmp など存在しない場合に備えて workspace を確保
   fs.mkdirSync(WORKSPACE_PATH, { recursive: true });
 
+  console.log("[chat] userText:", userText.slice(0, 100));
+  console.log("[chat] WORKSPACE_PATH:", WORKSPACE_PATH);
+  console.log("[chat] ANTHROPIC_API_KEY set:", !!process.env.ANTHROPIC_API_KEY);
+  console.log("[chat] existingSessionId:", existingSessionId ?? "none");
+
   // V1: query() + マルチターンは options.resume
   const q = query({
     prompt: userText,
@@ -134,6 +139,7 @@ export async function POST(req: Request) {
       }
     } catch (err) {
       streamError = err;
+      console.error("[chat] stream error:", err);
       throw err;
     } finally {
       toolTracker.endOpenWithWarning();
