@@ -35,9 +35,6 @@ function isToolContentBlock(
   );
 }
 
-/**
- * Langfuse クライアント（サーバーレスで遅延初期化。env は Next が先に読み込む）
- */
 let langfuseSingleton: Langfuse | null = null;
 
 export function getLangfuse(): Langfuse {
@@ -71,9 +68,6 @@ export function usageToLangfuseDetails(
   return out;
 }
 
-/**
- * 生成（ツール）の入出力を Langfuse に載せる。長大な値は切り詰める。
- */
 export class AgentToolSpanTracker {
   private readonly open = new Map<string, LangfuseSpanClient>();
 
@@ -125,7 +119,6 @@ export class AgentToolSpanTracker {
     }
   }
 
-  /** ストリーム終了時に tool_result まで届かなかったツール */
   endOpenWithWarning(): void {
     for (const span of this.open.values()) {
       span.end({
@@ -218,5 +211,5 @@ export function finalizeAgentGenerationAndTrace(params: {
 }
 
 export function resolveLangfuseEnvironment(): string | undefined {
-  return process.env.VERCEL_ENV ?? process.env.NODE_ENV ?? undefined;
+  return process.env.NODE_ENV ?? undefined;
 }

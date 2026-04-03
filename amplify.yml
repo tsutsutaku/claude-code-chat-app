@@ -1,3 +1,13 @@
+# AWS Amplify Hosting（公式: https://docs.aws.amazon.com/amplify/latest/userguide/ ）
+#
+# 【appRoot】ビルドのカレントはリポジトリ内のこのディレクトリ（= chat-app）。
+# 【アーキテクチャ】バックエンドは AgentCore に移管。このアプリは薄いプロキシ + フロントエンドのみ。
+#   フロントエンド → POST /api/chat → AgentCore (InvokeAgentRuntime)
+# 【必須環境変数】
+#   AGENTCORE_AGENT_ARN  : デプロイ後に agentcore status で確認
+#   AGENTCORE_REGION     : AgentCore をデプロイしたリージョン（例: us-east-1）※AWS_は使用不可
+#   NEXT_PUBLIC_*        : クライアント側公開変数（Langfuse など）
+# 【IAM】Amplify の実行ロールに bedrock-agentcore:InvokeAgentRuntime 権限が必要
 version: 1
 applications:
   - frontend:
@@ -7,16 +17,11 @@ applications:
             - nvm use 22
             - node --version
             - npm ci
-            # エージェントの cwd として必要な空ディレクトリを用意
-            - mkdir -p workspace/kurewari
         build:
           commands:
-            # Amplify コンソールの環境変数を Next.js のビルドに渡す（必要なキーのみ）
             - rm -f .env.production
-            - env | grep -e '^ANTHROPIC_' >> .env.production || true
-            - env | grep -e '^LANGFUSE_' >> .env.production || true
             - env | grep -e '^NEXT_PUBLIC_' >> .env.production || true
-            - env | grep -e '^WORKSPACE_PATH=' >> .env.production || true
+            - env | grep -e '^AGENTCORE_' >> .env.production || true
             - npm run build
       artifacts:
         baseDirectory: .next

@@ -4,83 +4,137 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-A Next.js 16 chat application that uses the Claude Agent SDK to run a Claude Code agent against a local workspace. The agent can analyze and work on the `workspace/kurewari` project (household expense-splitting app).
-
-## Development Commands
-
-All commands run from `chat-app/`:
-
-```bash
-npm install          # Install dependencies
-npm run dev          # Start dev server at http://localhost:3000
-npm run build        # Production build
-npm run lint         # ESLint
-npm run langfuse:seed-prompts  # Seed system prompts to Langfuse
-```
+A Next.js chat application (Amplify フロントエンド) + Amazon Bedrock AgentCore バックエンド。
+AgentCore 上でエージェント (Claude Agent SDK) が kurewari プロジェクトのワークスペースを分析し、SSE でフロントエンドにストリーミングする。
 
 ## Architecture
 
-### Request Flow
-
 ```
-Browser (useChat from AI SDK)
-  → POST /api/chat
-  → @anthropic-ai/claude-agent-sdk query()
-      ├── cwd: workspace/kurewari
-      ├── model: claude-haiku-4-5
-      ├── tools: Claude Code preset (Bash, Read, Write, Grep, etc.)
-      ├── systemPrompt: Langfuse (prod label) → local fallback
-      └── canUseTool: validates paths are within workspace/
-  → Stream SDKMessage → UIMessage (stream-adapter.ts)
-  → SSE response to browser
+Browser (useAgentChat)
+ → POST /api/chat                              (Amplify / Next.js proxy)
+ → InvokeAgentRuntime                         (AWS SDK → AgentCore)
+ → POST /invocations                          (AgentCore Container: Node.js)
+ → @anthropic-ai/claude-agent-sdk query()
+ ├── cwd: /tmp/workspace/kurewari
+ ├── model: claude-haiku-4-5
+ ├── tools: Claude Code preset
+ └── canUseTool: validates paths within workspace
+ → SSE (UIMessage Stream) → Amplify proxy → Browser
 ```
 
-### Key Files
+## Directory Structure
 
-| File | Role |
-|------|------|
-| `src/app/api/chat/route.ts` | Main agent query endpoint |
-| `src/lib/claude-session.ts` | Agent SDK config, system prompts, session management |
-| `src/lib/use-agent-chat.ts` | Client-side chat hook |
-| `src/lib/stream-adapter.ts` | Converts SDKMessage stream to UIMessage format |
-| `src/lib/workspace-tool-permissions.ts` | Validates tool calls stay within workspace/ |
-| `src/lib/langfuse-instrumentation.ts` | Langfuse tracing setup |
-| `src/lib/langfuse-system-prompt.ts` | Fetches system prompts from Langfuse |
+```
+/
+├── agent/                       # AgentCore プロジェクト（バックエンド）
+│   ├── agentcore/
+│   │   ├── agentcore.json       # エージェント定義
+│   │   ├── aws-targets.json     # デプロイ先 AWS アカウント・リージョン
+│   │   └── .env.local           # ローカル開発用シークレット（gitignored）
+│   └── app/ChatAgent/
+│       ├── Dockerfile           # Node.js 22 ARM64 コンテナ
+│       ├── package.json
+│       ├── tsconfig.json
+│       └── src/
+│           ├── server.ts        # HTTP server (GET /ping, POST /invocations)
+│           ├── claude-session.ts
+│           ├── stream-adapter.ts
+│           ├── langfuse-instrumentation.ts
+│           ├── langfuse-system-prompt.ts
+│           ├── workspace-tool-permissions.ts
+│           ├── tool-subtitle.ts
+│           ├── bash-tool-display.ts
+│           └── read-tool-display.ts
+├── chat-app/                    # Amplify フロントエンド（Next.js 16）
+│   └── src/
+│       ├── app/api/chat/route.ts  # AgentCore への薄いプロキシ
+│       └── ...
+├── amplify.yml                  # Amplify Hosting ビルド定義
+└── CLAUDE.md
+```
 
-### Session Management
+## Development Commands
 
-Sessions are stored in an in-memory `Map` in `claude-session.ts`. `POST /api/chat` creates or resumes a session by `sessionId`. Session endpoints live at `src/app/api/claude-sessions/`.
+### AgentCore バックエンド (`agent/app/ChatAgent/`)
 
-### Operating Modes
+```bash
+npm install
+npm run build        # TypeScript コンパイル
+npm start            # サーバー起動 (port 8080)
+```
 
-The system prompt has two modes toggled via the `developerMode` flag in the chat request:
-- **Developer Mode**: Technical explanations with code details
-- **Business Mode**: Plain language summaries, no code
+AgentCore CLI でのローカルテスト:
 
-## Agent Workspace
+```bash
+cd agent
+agentcore dev        # ローカル開発サーバー
+agentcore dev "質問してみる"   # 別ターミナルから invoke
+```
 
-`workspace/kurewari/` is the agent's working directory (gitignored). It contains a full-stack expense-splitting app:
-- `frontend/` — Next.js 14 (React Query, RSC)
-- `api/` — Hono on Cloudflare Workers + Neon PostgreSQL + Drizzle ORM
-- `packages/types/` — Shared Zod schemas
-- `docs/` — Architecture and design docs (Japanese)
+### デプロイ
 
-See `workspace/kurewari/CLAUDE.md` for agent guidance specific to that project.
+```bash
+cd agent
+# aws-targets.json に AWS アカウント ID とリージョンを設定してから:
+agentcore deploy -y
+# デプロイ後に ARN を確認:
+agentcore status
+```
+
+### フロントエンド (`chat-app/`)
+
+```bash
+npm install
+npm run dev         # http://localhost:3000
+npm run build
+npm run lint
+```
 
 ## Required Environment Variables
 
+### AgentCore コンテナ（`agent/agentcore/.env.local`）
+
 ```
-ANTHROPIC_API_KEY           # Required
-LANGFUSE_SECRET_KEY         # Optional — enables tracing
-LANGFUSE_PUBLIC_KEY         # Optional
-LANGFUSE_BASE_URL           # Optional
-NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY  # Optional — client-side Langfuse
-NEXT_PUBLIC_LANGFUSE_BASE_URL    # Optional
-NEXT_PUBLIC_USER_ID         # Optional — Langfuse userId
+ANTHROPIC_API_KEY   # 必須
+LANGFUSE_SECRET_KEY # オプション
+LANGFUSE_PUBLIC_KEY # オプション
+LANGFUSE_BASE_URL   # オプション
 ```
 
-Copy `.env.example` (or set manually) before running.
+### Amplify フロントエンド（Amplify コンソールで設定）
 
-## Claude Agent SDK Reference
+```
+AGENTCORE_AGENT_ARN  # デプロイ後に agentcore status で確認（必須）
+AWS_REGION           # AgentCore デプロイ先リージョン（必須）
+NEXT_PUBLIC_LANGFUSE_PUBLIC_KEY  # オプション
+NEXT_PUBLIC_LANGFUSE_BASE_URL    # オプション
+NEXT_PUBLIC_USER_ID              # オプション
+```
 
-`claude_agent_sdk_v1.md` at the repo root contains the full TypeScript API reference for the Agent SDK used in this project.
+## AgentCore CLI Reference
+
+```bash
+npm install -g @aws/agentcore   # インストール
+agentcore create                # プロジェクト作成（ウィザード）
+agentcore deploy -y             # デプロイ
+agentcore status                # ARN・デプロイ状態確認
+agentcore invoke "テスト"       # デプロイ済みエージェントを呼ぶ
+agentcore logs                  # ログストリーム
+```
+
+## Key Files
+
+| File | Role |
+|------|------|
+| `agent/app/ChatAgent/src/server.ts` | HTTP エントリポイント（/ping, /invocations） |
+| `agent/app/ChatAgent/src/claude-session.ts` | Claude Agent SDK オプション・WORKSPACE_PATH |
+| `agent/app/ChatAgent/src/stream-adapter.ts` | SDKMessage → UIMessage SSE 変換 |
+| `chat-app/src/app/api/chat/route.ts` | Amplify プロキシ（InvokeAgentRuntime） |
+| `chat-app/src/lib/use-agent-chat.ts` | クライアント側チャットフック |
+
+## Notes
+
+- AgentCore コンテナは長時間起動する（サーバーレスではない）のでインメモリの `sessionStore` が機能する
+- `WORKSPACE_PATH` は `/tmp/workspace` 固定（コンテナの書き込み可能領域）
+- Amplify 実行ロールに `bedrock-agentcore:InvokeAgentRuntime` IAM 権限が必要
+- ストリーミングレスポンスは AgentCore の SSE → Amplify プロキシ → ブラウザとパイプされる

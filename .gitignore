@@ -14,5 +14,12 @@ chat-app/npm-debug.log*
 chat-app/yarn-error.log*
 chat-app/.pnpm-debug.log*
 
+# AgentCore バックエンド
+agent/app/ChatAgent/node_modules/
+agent/app/ChatAgent/dist/
+agent/agentcore/.env.local
+agent/agentcore/.cli/
+agent/.runtime-arn
+
 # OS
 .DS_Store

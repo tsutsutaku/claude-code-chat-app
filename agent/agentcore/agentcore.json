@@ -1,0 +1,20 @@
+{
+  "name": "ChatAgent",
+  "version": 1,
+  "agents": [
+    {
+      "type": "AgentCoreRuntime",
+      "name": "ChatAgent",
+      "build": "Container",
+      "entrypoint": "dist/server.js",
+      "codeLocation": "app/ChatAgent/",
+      "runtimeVersion": "PYTHON_3_13",
+      "protocol": "HTTP",
+      "networkMode": "PUBLIC"
+    }
+  ],
+  "memories": [],
+  "credentials": [],
+  "evaluators": [],
+  "onlineEvalConfigs": []
+}

@@ -1,11 +1,9 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {
-  /**
-   * バンドルで `import.meta.url` がチャンクを指すと `cli.js` が解決できず、
-   * Claude Code 子プロセスが即終了する（Amplify Lambda / Vercel 等）。
-   */
-  serverExternalPackages: ["@anthropic-ai/claude-agent-sdk"],
-};
+// `serverExternalPackages` に SDK を入れると Turbopack が仮想パッケージ名を生成し、
+// Lambda の `/var/task` で ERR_MODULE_NOT_FOUND になる。`claude-session.ts` の
+// `pathToClaudeCodeExecutable` で cli.js を明示する。
+
+const nextConfig: NextConfig = {};
 
 export default nextConfig;

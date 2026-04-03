@@ -1,5 +1,5 @@
-import { unwrapToolInput, tryParseJsonObject, globToolSubtitle, readToolDisplay } from "@/lib/read-tool-display";
-import { bashCommandLine } from "@/lib/bash-tool-display";
+import { unwrapToolInput, tryParseJsonObject, globToolSubtitle, readToolDisplay } from "./read-tool-display.js";
+import { bashCommandLine } from "./bash-tool-display.js";
 
 function extractStringField(
   input: unknown,
@@ -55,11 +55,6 @@ export type ToolDisplayInfo = {
   subtitle: string | null;
 };
 
-/**
- * ツール名と入力から、ヘッダーに表示するタイトルとサブタイトルを決定する。
- * サブタイトルにはファイルパスやコマンドなど、ツール固有の情報を含む。
- * input が空の場合は partTitle（サーバーが保存したヒント）をフォールバックに使う。
- */
 export function resolveToolDisplay(
   toolName: string,
   input: unknown,
@@ -100,10 +95,6 @@ export function resolveToolDisplay(
   return { title: toolName, subtitle: titleFallback };
 }
 
-/**
- * サーバーサイド（stream-adapter）で SSE の title フィールドに載せるヒント文字列。
- * クライアント側で input が欠けた場合のフォールバックとして使われる。
- */
 export function toolDisplayHint(
   toolName: string,
   input: unknown

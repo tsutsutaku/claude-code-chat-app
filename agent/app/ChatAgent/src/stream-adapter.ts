@@ -1,12 +1,6 @@
 import type { SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-import { nanoid } from "nanoid";
-
-import { toolDisplayHint } from "@/lib/tool-subtitle";
-
-/**
- * Claude Agent SDK の SDKMessage を AI SDK UIMessage Stream (SSE) に変換する。
- * テキストブロックごとに text-end を挟み、本文→ツール→本文の順でパートが並ぶようにする。
- */
+import { randomUUID } from "crypto";
+import { toolDisplayHint } from "./tool-subtitle.js";
 
 function encode(data: Record<string, unknown>): string {
   return `data: ${JSON.stringify(data)}\n\n`;
@@ -32,7 +26,6 @@ function safeParseToolInput(json: string): unknown {
   }
 }
 
-/** パース結果が `{}` だけなのに生 JSON はあるときは文字列を渡し、クライアント側で再パースさせる */
 function normalizeToolInputForUi(raw: string): unknown {
   const parsed = safeParseToolInput(raw);
   if (
@@ -48,7 +41,6 @@ function normalizeToolInputForUi(raw: string): unknown {
 }
 
 export type UIMessageStreamOptions = {
-  /** Langfuse のトレース ID（クライアントでフィードバック送信に使用） */
   langfuseTraceId?: string;
 };
 
@@ -56,7 +48,7 @@ export function createUIMessageStream(
   sdkStream: AsyncGenerator<SDKMessage, void>,
   options?: UIMessageStreamOptions
 ): ReadableStream {
-  const messageId = nanoid();
+  const messageId = randomUUID();
   const encoder = new TextEncoder();
 
   return new ReadableStream({
@@ -74,7 +66,6 @@ export function createUIMessageStream(
       );
       controller.enqueue(encoder.encode(encode({ type: "start-step" })));
 
-      /** 開いているテキストセグメントの id（ブロック終了で閉じる） */
       let activeTextId: string | null = null;
 
       const blockIndexToKind = new Map<
@@ -87,14 +78,8 @@ export function createUIMessageStream(
         { toolCallId: string; toolName: string }
       >();
 
-      /** toolCallId → title ヒント。output イベントでも title を維持するために保持する */
       const toolTitleByCallId = new Map<string, string>();
 
-      /**
-       * stream_event でテキスト／ツールを既に送出したか。
-       * 送出済みなのに同じターンの assistant も届くと二重になるためスキップする。
-       * 逆に stream が空で assistant だけのときはフォールバックで送出する。
-       */
       let streamEmittedAssistantContent = false;
 
       const emitTextEnd = () => {
@@ -110,7 +95,7 @@ export function createUIMessageStream(
 
       const ensureTextStart = () => {
         if (!activeTextId) {
-          activeTextId = nanoid();
+          activeTextId = randomUUID();
           controller.enqueue(
             encoder.encode(
               encode({ type: "text-start", id: activeTextId })
@@ -279,8 +264,6 @@ export function createUIMessageStream(
                       ? block.input
                       : JSON.stringify(block.input)
                     : "";
-                // `block.input` が空オブジェクト {} のときは SDK のプレースホルダーなので無視する。
-                // 実際の内容は後続の input_json_delta で届く。
                 const initial = inputStr === "{}" ? "" : inputStr;
                 toolJsonByIndex.set(idx, initial);
               } else {

@@ -50,11 +50,14 @@ const PATH_KEY_HINTS = [
 function collectPathCandidates(obj: unknown, depth = 0): string[] {
   if (depth > 10) return [];
   const out: string[] = [];
+
   const parsed = tryParseJsonObject(obj);
   if (parsed) {
     for (const k of PATH_KEY_HINTS) {
       const v = parsed[k];
-      if (typeof v === "string" && v.trim()) out.push(v.trim());
+      if (typeof v === "string" && v.trim()) {
+        out.push(v.trim());
+      }
     }
     if ("arguments" in parsed) {
       out.push(...collectPathCandidates(parsed.arguments, depth + 1));
@@ -65,6 +68,7 @@ function collectPathCandidates(obj: unknown, depth = 0): string[] {
       }
     }
   }
+
   return out;
 }
 
@@ -90,10 +94,16 @@ export function readToolDisplay(
   input: unknown,
   output?: unknown
 ): ReadToolDisplay | null {
-  const fromInput = pickBestPath(collectPathCandidates(unwrapToolInput(input)));
+  const fromInput = pickBestPath(
+    collectPathCandidates(unwrapToolInput(input))
+  );
   if (fromInput) {
-    return { fileName: basenamePath(fromInput), pathHint: fromInput };
+    return {
+      fileName: basenamePath(fromInput),
+      pathHint: fromInput,
+    };
   }
+
   if (output && typeof output === "object" && !Array.isArray(output)) {
     const o = output as Record<string, unknown>;
     for (const k of PATH_KEY_HINTS) {
@@ -104,6 +114,7 @@ export function readToolDisplay(
       }
     }
   }
+
   return null;
 }
 
@@ -128,7 +139,9 @@ export function previewGlobOutput(
   output: unknown,
   maxLines = GLOB_PREVIEW_LINE_COUNT
 ): unknown {
-  if (typeof output === "string") return previewReadOutput(output, maxLines);
+  if (typeof output === "string") {
+    return previewReadOutput(output, maxLines);
+  }
   if (Array.isArray(output)) {
     const lines = output.map((item) =>
       typeof item === "string" ? item : JSON.stringify(item)
@@ -146,13 +159,36 @@ export function isGlobToolName(name: string): boolean {
   return name.toLowerCase() === "glob";
 }
 
-export function resolveToolOutput(part: {
-  toolName: string;
-  errorText: string | null;
-  output: unknown;
-}): unknown {
-  if (part.errorText) return part.output;
-  if (isReadToolName(part.toolName)) return previewReadOutput(part.output);
-  if (isGlobToolName(part.toolName)) return previewGlobOutput(part.output);
-  return part.output;
+function collectGlobPatternHints(obj: unknown, depth = 0): string[] {
+  if (depth > 10) return [];
+  const out: string[] = [];
+
+  const parsed = tryParseJsonObject(obj);
+  if (parsed) {
+    const pattern = parsed.pattern;
+    const pathVal = parsed.path;
+    if (typeof pattern === "string" && pattern.trim()) {
+      const p = pattern.trim();
+      if (typeof pathVal === "string" && pathVal.trim()) {
+        out.push(`${pathVal.trim()} — ${p}`);
+      } else {
+        out.push(p);
+      }
+    }
+    if ("arguments" in parsed) {
+      out.push(...collectGlobPatternHints(parsed.arguments, depth + 1));
+    }
+    for (const v of Object.values(parsed)) {
+      if (v && typeof v === "object") {
+        out.push(...collectGlobPatternHints(v, depth + 1));
+      }
+    }
+  }
+
+  return out;
+}
+
+export function globToolSubtitle(input: unknown): string | null {
+  const hints = collectGlobPatternHints(unwrapToolInput(input));
+  return hints[0] ?? null;
 }

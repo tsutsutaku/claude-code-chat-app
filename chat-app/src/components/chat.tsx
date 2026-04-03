@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import {
   Conversation,
   ConversationContent,
@@ -21,10 +21,9 @@ import { resolveToolOutput } from "@/lib/read-tool-display";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { Tool, ToolContent, ToolHeader, ToolOutput } from "@/components/ai-elements/tool";
 import { ToolGroup } from "@/components/tool-group";
-import { ConversationSidebar } from "@/components/conversation-sidebar";
 import { DeveloperModeEmptyControl } from "@/components/developer-mode-empty-control";
 import { AssistantMessageFeedback } from "@/components/message-feedback";
-import { useAgentChat, type ChatMessage, type ChatStatus, type MessagePart, type ToolPart, type TextPart } from "@/lib/use-agent-chat";
+import { useAgentChat, type ChatMessage, type MessagePart, type ToolPart, type TextPart } from "@/lib/use-agent-chat";
 import { cn } from "@/lib/utils";
 
 /** 連続するツールパートをグループ化する */
@@ -57,7 +56,7 @@ function groupParts(parts: MessagePart[], messageId: string): PartGroup[] {
 function hasAssistantContent(message: ChatMessage): boolean {
   if (message.role !== "assistant") return false;
   return message.parts.some(
-    (p) => (p.type === "text" && p.text.trim()) || p.type === "tool"
+    (p: MessagePart) => (p.type === "text" && p.text.trim()) || p.type === "tool"
   );
 }
 
@@ -79,23 +78,11 @@ export function Chat() {
     localStorage.setItem(STORAGE_KEY, String(value));
   };
 
-  const { messages, sendMessage, status, stop, newConversation, loadConversation } = useAgentChat(
+  const { messages, sendMessage, status, stop } = useAgentChat(
     "/api/chat",
     { extraBody: { developerMode } }
   );
   const [input, setInput] = useState("");
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  /** 応答完了のたびに加算し、サイドバーでセッション一覧を再取得する */
-  const [sessionListVersion, setSessionListVersion] = useState(0);
-  const prevStatusRef = useRef<ChatStatus>(status);
-
-  useEffect(() => {
-    const prev = prevStatusRef.current;
-    prevStatusRef.current = status;
-    if (prev === "streaming" && status === "idle") {
-      setSessionListVersion((v) => v + 1);
-    }
-  }, [status]);
 
   const awaitingFirstToken = useMemo(() => {
     if (status !== "submitted" && status !== "streaming") return false;
@@ -108,18 +95,6 @@ export function Chat() {
 
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-row">
-      <ConversationSidebar
-        activeSessionId={activeSessionId}
-        sessionListVersion={sessionListVersion}
-        onNewChat={() => {
-          newConversation();
-          setActiveSessionId(null);
-        }}
-        onLoadSession={(msgs, sessionId) => {
-          loadConversation(msgs, sessionId);
-          setActiveSessionId(sessionId);
-        }}
-      />
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col px-[4.5rem] sm:px-[7.5rem] md:px-[10.5rem] lg:px-[15rem]">
       <Conversation className="min-h-0 w-full min-w-0">
         <ConversationContent className="w-full min-w-0 max-w-none px-0 py-4 sm:px-0">

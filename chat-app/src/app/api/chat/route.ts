@@ -1,35 +1,34 @@
-import fs from "fs";
 import type { UIMessage } from "ai";
-import type { SDKMessage, SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
-import { query } from "@anthropic-ai/claude-agent-sdk";
-import { agentQueryOptions, MODEL, WORKSPACE_PATH } from "@/lib/claude-session";
 import {
-  AgentToolSpanTracker,
-  finalizeAgentGenerationAndTrace,
-  getLangfuse,
-  resolveLangfuseEnvironment,
-} from "@/lib/langfuse-instrumentation";
-import { resolveAgentSystemPrompt } from "@/lib/langfuse-system-prompt";
-import { DEFAULT_TEST_USER_ID } from "@/lib/chat-user";
-import { createUIMessageStream } from "@/lib/stream-adapter";
+  BedrockAgentCoreClient,
+  InvokeAgentRuntimeCommand,
+} from "@aws-sdk/client-bedrock-agentcore";
 
 export const maxDuration = 120;
 
-// セッションIDを会話ごとに保持するための簡易ストア
-const sessionStore = new Map<string, string>();
+const AGENT_ARN = process.env.AGENTCORE_AGENT_ARN;
+const AWS_REGION = process.env.AGENTCORE_REGION ?? process.env.AWS_REGION ?? "us-east-1";
+/** ローカル開発用: agentcore dev のエンドポイント（例: http://localhost:8080） */
+const LOCAL_URL = process.env.AGENTCORE_LOCAL_URL?.replace(/\/$/, "");
+
+/**
+ * chatId（nanoid 21文字）を AgentCore RuntimeSessionId の制約（最小 33 文字、
+ * パターン [a-zA-Z0-9][a-zA-Z0-9-_]*）に合わせる。
+ */
+function toRuntimeSessionId(chatId: string): string {
+  if (chatId.length >= 33) return chatId.slice(0, 256);
+  return (chatId + "0".repeat(33 - chatId.length)).slice(0, 256);
+}
 
 export async function POST(req: Request) {
   const body = (await req.json()) as {
     messages: UIMessage[];
-    /** useChat / DefaultChatTransport が送るチャット識別子 */
     id?: string;
     chatId?: string;
     developerMode?: boolean;
-    /** 履歴から開いた直後など、サーバー Map に無いときの Claude セッション ID */
     resumeSessionId?: string;
   };
   const { messages, developerMode } = body;
-  /** AI SDK v6 は `id`、以前の例では `chatId` のことがある */
   const chatKey = body.chatId ?? body.id;
 
   const lastUserMessage = messages.findLast((m) => m.role === "user");
@@ -37,130 +36,81 @@ export async function POST(req: Request) {
     return new Response("No user message found", { status: 400 });
   }
 
-  // UIMessage の parts からテキストを抽出
   const userText = lastUserMessage.parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
     .map((p) => p.text)
     .join("\n");
 
-  const existingSessionId =
-    (chatKey ? sessionStore.get(chatKey) : undefined) ?? body.resumeSessionId;
+  const payload = JSON.stringify({
+    prompt: userText,
+    developerMode: developerMode !== false,
+    chatId: chatKey,
+    ...(body.resumeSessionId ? { resumeSessionId: body.resumeSessionId } : {}),
+  });
 
-  const abortController = new AbortController();
-  if (req.signal.aborted) {
-    abortController.abort();
-  } else {
-    req.signal.addEventListener("abort", () => abortController.abort(), {
-      once: true,
+  // ── ローカル開発モード: agentcore dev に直接 HTTP リクエスト ──
+  if (LOCAL_URL) {
+    console.log("[proxy] local mode →", LOCAL_URL);
+    console.log("[proxy] prompt:", userText.slice(0, 100));
+
+    const agentRes = await fetch(`${LOCAL_URL}/invocations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: payload,
+    });
+
+    if (!agentRes.ok || !agentRes.body) {
+      const text = await agentRes.text().catch(() => "");
+      return new Response(`AgentCore local error: ${text}`, { status: 502 });
+    }
+
+    return new Response(agentRes.body, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+        "x-vercel-ai-ui-message-stream": "v1",
+      },
     });
   }
 
-  const langfuse = getLangfuse();
-  const resolvedPrompt = await resolveAgentSystemPrompt(developerMode !== false);
+  // ── 本番モード: InvokeAgentRuntime (AWS SDK) ──
+  if (!AGENT_ARN) {
+    return new Response(
+      JSON.stringify({
+        error:
+          "AGENTCORE_AGENT_ARN または AGENTCORE_LOCAL_URL を設定してください",
+      }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
+  }
 
-  const userId =
-    req.headers.get("x-user-id") ??
-    (process.env.NODE_ENV === "test" ? DEFAULT_TEST_USER_ID : undefined);
-  const tags = [
-    "chat-app",
-    developerMode === false ? "mode:business" : "mode:developer",
-  ];
+  const client = new BedrockAgentCoreClient({ region: AWS_REGION });
+  const runtimeSessionId = chatKey
+    ? toRuntimeSessionId(chatKey)
+    : toRuntimeSessionId(crypto.randomUUID().replace(/-/g, ""));
 
-  const trace = langfuse.trace({
-    name: "claude-agent-chat",
-    input: userText,
-    ...(chatKey ? { sessionId: chatKey } : {}),
-    ...(userId ? { userId } : {}),
-    tags,
-    environment: resolveLangfuseEnvironment(),
-    metadata: {
-      developer_mode: developerMode !== false,
-      ...(chatKey ? { client_chat_key: chatKey } : {}),
-    },
-    release: process.env.VERCEL_GIT_COMMIT_SHA ?? undefined,
+  console.log("[proxy] agentArn:", AGENT_ARN);
+  console.log("[proxy] runtimeSessionId:", runtimeSessionId);
+  console.log("[proxy] prompt:", userText.slice(0, 100));
+
+  const command = new InvokeAgentRuntimeCommand({
+    agentRuntimeArn: AGENT_ARN,
+    runtimeSessionId,
+    payload: Buffer.from(payload, "utf8"),
+    contentType: "application/json",
+    qualifier: "DEFAULT",
   });
 
-  const generation = trace.generation({
-    name: "claude-agent-query",
-    model: MODEL,
-    input: userText,
-    modelParameters: {
-      developer_mode: developerMode !== false,
-    },
-    ...(resolvedPrompt.langfusePrompt
-      ? { prompt: resolvedPrompt.langfusePrompt }
-      : {}),
-  });
+  const response = await client.send(command);
 
-  const toolTracker = new AgentToolSpanTracker(generation);
+  if (!response.response) {
+    return new Response("AgentCore returned no response body", { status: 502 });
+  }
 
-  // Lambda の /tmp など存在しない場合に備えて workspace を確保
-  fs.mkdirSync(WORKSPACE_PATH, { recursive: true });
+  const agentStream = response.response as ReadableStream<Uint8Array>;
 
-  console.log("[chat] userText:", userText.slice(0, 100));
-  console.log("[chat] WORKSPACE_PATH:", WORKSPACE_PATH);
-  console.log("[chat] ANTHROPIC_API_KEY set:", !!process.env.ANTHROPIC_API_KEY);
-  console.log("[chat] existingSessionId:", existingSessionId ?? "none");
-
-  // V1: query() + マルチターンは options.resume
-  const q = query({
-    prompt: userText,
-    options: agentQueryOptions({
-      resume: existingSessionId,
-      abortController,
-      systemPrompt: resolvedPrompt.systemPrompt,
-    }),
-  });
-
-  const wrappedStream = async function* (): AsyncGenerator<SDKMessage, void> {
-    let outputText = "";
-    let resultMessage: SDKResultMessage | null = null;
-    let streamError: unknown = null;
-
-    try {
-      for await (const msg of q) {
-        toolTracker.handleMessage(msg);
-
-        if (chatKey && msg.session_id && !sessionStore.has(chatKey)) {
-          sessionStore.set(chatKey, msg.session_id);
-        }
-        if (
-          msg.type === "assistant" &&
-          Array.isArray(msg.message?.content)
-        ) {
-          for (const block of msg.message.content) {
-            if (block.type === "text") outputText += block.text;
-          }
-        }
-        if (msg.type === "result") {
-          resultMessage = msg;
-        }
-        yield msg;
-      }
-    } catch (err) {
-      streamError = err;
-      console.error("[chat] stream error:", err);
-      throw err;
-    } finally {
-      toolTracker.endOpenWithWarning();
-      finalizeAgentGenerationAndTrace({
-        trace,
-        generation,
-        result: resultMessage,
-        streamError,
-        outputText,
-        model: MODEL,
-      });
-      await langfuse.flushAsync();
-    }
-  };
-
-  const uiStream = createUIMessageStream(wrappedStream(), {
-    /** LangfuseTraceClient の id / traceId は同一のトレース UUID */
-    langfuseTraceId: trace.id,
-  });
-
-  return new Response(uiStream, {
+  return new Response(agentStream, {
     headers: {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",

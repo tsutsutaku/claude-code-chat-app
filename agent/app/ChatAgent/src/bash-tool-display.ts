@@ -1,4 +1,4 @@
-import { unwrapToolInput, tryParseJsonObject } from "@/lib/read-tool-display";
+import { unwrapToolInput, tryParseJsonObject } from "./read-tool-display.js";
 
 const COMMAND_KEYS = ["command", "cmd", "shell_command"] as const;
 
@@ -27,9 +27,6 @@ function collectCommandCandidates(obj: unknown, depth = 0): string[] {
   return out;
 }
 
-/**
- * Bash ツールの input から表示用のコマンド行を得る。
- */
 export function bashCommandLine(input: unknown): string | null {
   const candidates = collectCommandCandidates(unwrapToolInput(input));
   return candidates[0] ?? null;

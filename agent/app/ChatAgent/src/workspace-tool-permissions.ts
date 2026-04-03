@@ -6,11 +6,6 @@ import type {
 
 type ToolUseOptions = Parameters<CanUseTool>[2];
 
-/**
- * ツール入力に含まれるパス系フィールドが workspace ルート配下か検証する。
- * Bash はコマンド文字列を簡易チェックする。
- */
-
 const PATH_KEYS = new Set([
   "path",
   "file_path",
@@ -65,9 +60,6 @@ function deny(message: string): PermissionResult {
   return { behavior: "deny", message };
 }
 
-/**
- * cwd を workspace のルートとし、その外へのファイル操作・参照を拒否する。
- */
 export function createWorkspaceCanUseTool(workspaceRoot: string): CanUseTool {
   const root = path.resolve(workspaceRoot);
 

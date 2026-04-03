@@ -1,20 +1,29 @@
 import path from "path";
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
-import { createWorkspaceCanUseTool } from "@/lib/workspace-tool-permissions";
+import { createWorkspaceCanUseTool } from "./workspace-tool-permissions.js";
 
-/** Lambda / Amplify SSR / Vercel など、ファイルシステムとバンドルが特殊な実行環境 */
-function isServerlessLikeRuntime(): boolean {
-  return Boolean(
-    process.env.AWS_LAMBDA_FUNCTION_NAME ||
-      process.env.AWS_EXECUTION_ENV ||
-      process.env.LAMBDA_TASK_ROOT ||
-      process.env.VERCEL,
+/**
+ * AgentCore コンテナ環境では /tmp のみ書き込み可能。
+ * workspace は /tmp/workspace に固定。
+ */
+export const WORKSPACE_PATH = process.env.WORKSPACE_PATH
+  ? path.resolve(process.env.WORKSPACE_PATH)
+  : "/tmp/workspace";
+
+export const MODEL = "claude-haiku-4-5";
+
+function resolvePathToClaudeCodeExecutable(): string {
+  const fromEnv = process.env.CLAUDE_CODE_CLI_PATH?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  const cwd = process.cwd();
+  return path.resolve(
+    path.join(cwd, "node_modules", "@anthropic-ai", "claude-agent-sdk", "cli.js")
   );
 }
 
 /**
  * Claude Code プロセスに渡す環境変数。
- * サーバーレスでは HOME 下への書き込みが失敗しうるため /tmp を明示する。
+ * コンテナでは HOME 下への書き込みが失敗するため /tmp を明示する。
  */
 function claudeCodeProcessEnv(): NonNullable<Options["env"]> {
   const home = process.env.CLAUDE_SERVERLESS_HOME?.trim() || "/tmp";
@@ -28,28 +37,6 @@ function claudeCodeProcessEnv(): NonNullable<Options["env"]> {
   };
 }
 
-/**
- * リポジトリ直下の `workspace` をエージェントの cwd にする。
- * - `WORKSPACE_PATH` 環境変数が設定されている場合はその値を使用（Amplify 等デプロイ環境向け）
- * - `chat-app` で `next dev` する場合: 親の `workspace`
- * - リポジトリルートで起動する場合: その直下の `workspace`
- */
-function resolveWorkspacePath(): string {
-  if (process.env.WORKSPACE_PATH) {
-    return path.resolve(process.env.WORKSPACE_PATH);
-  }
-  const cwd = process.cwd();
-  if (path.basename(cwd) === "chat-app") {
-    return path.resolve(cwd, "..", "workspace");
-  }
-  return path.resolve(cwd, "workspace");
-}
-
-export const WORKSPACE_PATH = resolveWorkspacePath();
-
-export const MODEL = "claude-haiku-4-5";
-
-/** Langfuse 未設定・取得失敗時のフォールバック（開発者モード） */
 export const FALLBACK_DEVELOPER_SYSTEM_PROMPT = [
   "【役割】",
   "あなたのタスクは、kurewari ディレクトリに関する仕様について回答することだけです。",
@@ -64,7 +51,6 @@ export const FALLBACK_DEVELOPER_SYSTEM_PROMPT = [
   "技術的な詳細（コード・スキーマ・SQLクエリ・実装の仕組みなど）を積極的に提示して構いません。",
 ].join("\n");
 
-/** Langfuse 未設定・取得失敗時のフォールバック（ビジネスモード） */
 export const FALLBACK_BUSINESS_SYSTEM_PROMPT = [
   "【役割】",
   "あなたのタスクは、kurewari ディレクトリに関する仕様について回答することだけです。",
@@ -83,30 +69,19 @@ export const FALLBACK_BUSINESS_SYSTEM_PROMPT = [
   "- 技術的な質問をされた場合も、業務上の意味や目的に言い換えて回答してください。",
 ].join("\n");
 
-/** V1 `query()` 用の共通オプション（cwd / model、任意で resume・中断） */
 export function agentQueryOptions(params: {
   resume?: string;
   abortController?: AbortController;
-  /** Langfuse から解決したシステムプロンプト（必須） */
   systemPrompt: string;
 }): Options {
   return {
     cwd: WORKSPACE_PATH,
     model: MODEL,
     systemPrompt: params.systemPrompt,
-    /** cwd 以外のディレクトリを追加で許可しない（SDK の追加探索先を空に） */
+    pathToClaudeCodeExecutable: resolvePathToClaudeCodeExecutable(),
     additionalDirectories: [],
-    /** ツール引数のパスが workspace 内か検証（systemPrompt より優先して強制） */
     canUseTool: createWorkspaceCanUseTool(WORKSPACE_PATH),
-    /**
-     * Claude Code 既定の組み込みツール（Grep / Read / Glob など）を有効化。
-     * 未指定だと Grep などが使えない場合がある。
-     */
     tools: { type: "preset", preset: "claude_code" },
-    /**
-     * チャット API 経由でユーザー承認がないため自動許可。
-     * 実際の可否は canUseTool で workspace 内に限定する。
-     */
     allowedTools: [
       "Grep",
       "Read",
@@ -116,14 +91,9 @@ export function agentQueryOptions(params: {
       "Write",
       "NotebookEdit",
     ],
-    /** テキスト・ツール呼び出しのストリームイベントを受け取る */
     includePartialMessages: true,
-    ...(isServerlessLikeRuntime()
-      ? {
-          persistSession: false,
-          env: claudeCodeProcessEnv(),
-        }
-      : {}),
+    persistSession: false,
+    env: claudeCodeProcessEnv(),
     ...(params.resume ? { resume: params.resume } : {}),
     ...(params.abortController
       ? { abortController: params.abortController }
